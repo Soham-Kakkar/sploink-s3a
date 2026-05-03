@@ -1,7 +1,8 @@
-'use client'
+"use client"
 
-import { useState, useEffect, use } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
+import { useParams } from 'next/navigation'
 
 interface Event {
   id: number
@@ -75,8 +76,9 @@ function formatDuration(value?: number | null) {
   return `${minutes}m ${seconds}s`
 }
 
-export default function SessionDetail({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params)
+export default function SessionDetail() {
+  const params = useParams();
+  const { id } = params
   const [data, setData] = useState<SessionData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -170,8 +172,7 @@ export default function SessionDetail({ params }: { params: Promise<{ id: string
               </div>
             </section>
 
-            <section className="grid gap-6 lg:grid-cols-[1.3fr_0.9fr]">
-              <div className="space-y-4 rounded-4xl border border-white/60 bg-white/75 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur sm:p-6">
+            <section className="space-y-4 rounded-4xl border border-white/60 bg-white/75 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur sm:p-6">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h2 className="text-xl font-semibold">Detected issues</h2>
@@ -208,22 +209,6 @@ export default function SessionDetail({ params }: { params: Promise<{ id: string
                     ))}
                   </div>
                 </div>
-              </div>
-
-              <aside className="space-y-4 rounded-4xl border border-white/60 bg-white/75 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur sm:p-6">
-                <h2 className="text-xl font-semibold">Read this timeline</h2>
-                <div className="space-y-3 text-sm text-slate-600">
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    Failure rows are tinted red and are the strongest signal that the session is stuck.
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    Rows missing file metadata are labeled as incomplete data instead of breaking the view.
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    The most recent events are shown at the bottom, which makes the flow easy to scan from start to finish.
-                  </div>
-                </div>
-              </aside>
             </section>
 
             <section className="space-y-4 rounded-4xl border border-white/60 bg-white/75 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur sm:p-6">

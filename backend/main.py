@@ -5,7 +5,7 @@ import hashlib
 from typing import List
 
 from .database import init_db, get_db
-from .models import EventPayload, SessionResponse
+from .models import EventPayload
 from .detection import detect_issues
 
 app = FastAPI(title="Agent Observability API")
@@ -28,10 +28,8 @@ async def ingest_event(payload: EventPayload, background_tasks: BackgroundTasks,
     hash_key = hashlib.sha256(hash_str.encode()).hexdigest()
     
     # 2. Extract metadata
-    status = payload.metadata.status if payload.metadata and payload.metadata.status else "success"
+    status = payload.metadata.status if payload.metadata else "success"
     file_target = payload.metadata.file if payload.metadata else None
-    input_text = payload.input or ""
-    output_text = payload.output or ""
     
     # 3. Insert Session if not exists (to ensure foreign key works and session shows up)
     await db.execute(
@@ -46,7 +44,7 @@ async def ingest_event(payload: EventPayload, background_tasks: BackgroundTasks,
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             payload.session_id, payload.timestamp, payload.step, payload.action,
-            input_text, output_text, status, file_target, hash_key
+            payload.input, payload.output, status, file_target, hash_key
         ))
         await db.commit()
     except aiosqlite.IntegrityError:
@@ -54,39 +52,40 @@ async def ingest_event(payload: EventPayload, background_tasks: BackgroundTasks,
         return {"status": "ignored", "reason": "duplicate"}
 
     # 5. Trigger Detection (Async)
-    background_tasks.add_task(detect_issues, payload.session_id)
+    background_tasks.add_task(detect_issues, db, payload.session_id)
     
     return {"status": "success"}
 
-@app.get("/sessions", response_model=List[SessionResponse])
+@app.get("/sessions")
 async def list_sessions(db: aiosqlite.Connection = Depends(get_db)):
-    async with db.execute(
-        """
-        SELECT
-            s.session_id,
-            s.status,
-            s.created_at,
-            s.updated_at,
-            s.drift_streak,
-            COUNT(e.id) AS total_events,
-            COALESCE(SUM(CASE WHEN e.status = 'success' THEN 1 ELSE 0 END), 0) AS success_events,
-            COALESCE(SUM(CASE WHEN e.status = 'failure' THEN 1 ELSE 0 END), 0) AS failure_events,
-            (
-                SELECT e2.action
-                FROM events e2
-                WHERE e2.session_id = s.session_id
-                ORDER BY e2.timestamp DESC, e2.id DESC
-                LIMIT 1
-            ) AS last_action,
-            MAX(e.timestamp) AS last_seen
-        FROM sessions s
-        LEFT JOIN events e ON e.session_id = s.session_id
-        GROUP BY s.session_id
-        ORDER BY s.updated_at DESC
-        """
-    ) as cursor:
+    # Aggregate per-session metrics so the frontend can display counts and last seen/action
+    query = """
+    SELECT
+      s.session_id,
+      s.status,
+      s.created_at,
+      s.updated_at,
+      COUNT(e.id) AS total_events,
+      SUM(CASE WHEN e.status = 'success' THEN 1 ELSE 0 END) AS success_events,
+      SUM(CASE WHEN e.status = 'failure' THEN 1 ELSE 0 END) AS failure_events,
+      (SELECT action FROM events WHERE session_id = s.session_id ORDER BY timestamp DESC LIMIT 1) AS last_action,
+      (SELECT timestamp FROM events WHERE session_id = s.session_id ORDER BY timestamp DESC LIMIT 1) AS last_seen
+    FROM sessions s
+    LEFT JOIN events e ON s.session_id = e.session_id
+    GROUP BY s.session_id
+    ORDER BY s.updated_at DESC
+    """
+    async with db.execute(query) as cursor:
         rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        result = []
+        for r in rows:
+            row = dict(r)
+            # sqlite returns None for aggregates when no rows exist; normalize to integers
+            row['total_events'] = int(row.get('total_events') or 0)
+            row['success_events'] = int(row.get('success_events') or 0)
+            row['failure_events'] = int(row.get('failure_events') or 0)
+            result.append(row)
+        return result
 
 @app.get("/sessions/{session_id}")
 async def get_session_detail(session_id: str, db: aiosqlite.Connection = Depends(get_db)):
@@ -97,40 +96,64 @@ async def get_session_detail(session_id: str, db: aiosqlite.Connection = Depends
     
     async with db.execute("SELECT * FROM events WHERE session_id = ? ORDER BY timestamp ASC", (session_id,)) as cursor:
         events = await cursor.fetchall()
-
-    total_events = len(events)
-    success_events = sum(1 for event in events if event["status"] == "success")
-    failure_events = sum(1 for event in events if event["status"] == "failure")
+    # Build summary statistics expected by the frontend
+    events_list = [dict(e) for e in events]
+    total_events = len(events_list)
+    success_events = sum(1 for e in events_list if (e.get('status') or 'success') == 'success')
+    failure_events = sum(1 for e in events_list if (e.get('status') or 'success') == 'failure')
     action_distribution = {}
-    for event in events:
-        action = event["action"] or "unknown"
+    first_seen = None
+    last_seen = None
+    for e in events_list:
+        action = e.get('action') or 'unknown'
         action_distribution[action] = action_distribution.get(action, 0) + 1
+        ts = e.get('timestamp')
+        if ts is not None:
+            if first_seen is None or ts < first_seen:
+                first_seen = ts
+            if last_seen is None or ts > last_seen:
+                last_seen = ts
 
-    first_seen = events[0]["timestamp"] if events else None
-    last_seen = events[-1]["timestamp"] if events else None
-    duration = None if first_seen is None or last_seen is None else max(0.0, last_seen - first_seen)
+    duration = None
+    if first_seen is not None and last_seen is not None:
+        try:
+            duration = float(last_seen) - float(first_seen)
+        except Exception:
+            duration = None
 
-    detected_issues = []
-    if session["status"] == "looping":
-        detected_issues.append("Repeated command patterns with recent failures suggest the agent is looping.")
-    elif session["status"] == "drifting":
-        detected_issues.append("The current work has stopped overlapping with the session baseline, which looks like intent drift.")
-    elif session["status"] == "failing":
-        detected_issues.append("The latest events are failing back-to-back, which points to a stuck retry path.")
-    else:
-        detected_issues.append("No anomaly has crossed the heuristic thresholds yet.")
+    # Detected issues: surface simple human-friendly messages
+    detected = []
+    sess = dict(session)
+    status = sess.get('status')
+    if status == 'looping':
+        detected.append('Looping detected — the agent is repeating recent actions.')
+    if status == 'failing':
+        detected.append('Failing — recent events show consecutive failures.')
+    if status == 'drifting':
+        detected.append('Drift detected — recent actions deviate from the baseline.')
+
+    # Additional heuristic: note long sessions or many failures
+    if failure_events > 0 and total_events > 0:
+        fail_ratio = failure_events / total_events
+        if fail_ratio > 0.5:
+            detected.append(f'Failure rate is high ({failure_events}/{total_events}).')
+
+    # drift_streak is not tracked separately; provide a basic value for frontend
+    drift_streak = 1 if status == 'drifting' else 0
+
+    summary = {
+        'total_events': total_events,
+        'success_events': success_events,
+        'failure_events': failure_events,
+        'action_distribution': action_distribution,
+        'first_seen': first_seen,
+        'last_seen': last_seen,
+        'duration': duration,
+    }
 
     return {
-        "session": dict(session),
-        "summary": {
-            "total_events": total_events,
-            "success_events": success_events,
-            "failure_events": failure_events,
-            "action_distribution": action_distribution,
-            "first_seen": first_seen,
-            "last_seen": last_seen,
-            "duration": duration,
-        },
-        "detected_issues": detected_issues,
-        "events": [dict(e) for e in events]
+        'session': {**sess, 'drift_streak': drift_streak},
+        'summary': summary,
+        'detected_issues': detected,
+        'events': events_list,
     }

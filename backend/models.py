@@ -10,8 +10,8 @@ class EventPayload(BaseModel):
     timestamp: float
     step: int
     action: str
-    input: Optional[str] = None
-    output: Optional[str] = None
+    input: str
+    output: str
     metadata: Optional[EventMetadata] = None
 
 class SessionResponse(BaseModel):
@@ -19,9 +19,3 @@ class SessionResponse(BaseModel):
     status: str
     created_at: str
     updated_at: str
-    drift_streak: int = 0
-    total_events: int = 0
-    success_events: int = 0
-    failure_events: int = 0
-    last_action: Optional[str] = None
-    last_seen: Optional[float] = None

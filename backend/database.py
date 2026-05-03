@@ -1,26 +1,19 @@
 import aiosqlite
 import os
 
-DB_PATH = os.getenv("AGENT_OBS_DB_PATH", "agent_obs.db")
+DB_PATH = "agent_obs.db"
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA foreign_keys = ON")
         # Sessions table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id TEXT PRIMARY KEY,
                 status TEXT DEFAULT 'healthy',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                drift_streak INTEGER DEFAULT 0
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-
-        try:
-            await db.execute("ALTER TABLE sessions ADD COLUMN drift_streak INTEGER DEFAULT 0")
-        except aiosqlite.OperationalError:
-            pass
         
         # Events table
         await db.execute("""
@@ -51,9 +44,11 @@ async def init_db():
         await db.commit()
 
 async def get_db():
+    # Ensure DB and tables exist before returning a connection.
+    # Calling init_db() is idempotent because it uses CREATE TABLE IF NOT EXISTS.
+    await init_db()
     db = await aiosqlite.connect(DB_PATH)
     db.row_factory = aiosqlite.Row
-    await db.execute("PRAGMA foreign_keys = ON")
     try:
         yield db
     finally:

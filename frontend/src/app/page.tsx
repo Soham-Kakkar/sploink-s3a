@@ -151,7 +151,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        <section className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
+        <section className="flex flex-col gap-6">
           <div className="space-y-4 rounded-4xl border border-white/60 bg-white/75 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur sm:p-6">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -256,7 +256,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <aside className="space-y-4 rounded-4xl border border-white/60 bg-white/75 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur sm:p-6">
+          <div className="space-y-4 rounded-4xl border border-white/60 bg-white/75 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur sm:p-6">
             <div>
               <h2 className="text-xl font-semibold">What to try</h2>
               <p className="mt-1 text-sm text-slate-500">
@@ -294,7 +294,7 @@ export default function Dashboard() {
                 <p className="mt-2 text-slate-600">A string of repeated failures shows how the system reacts when retries stop being productive.</p>
               </div>
             </div>
-          </aside>
+          </div>
         </section>
       </div>
     </div>
