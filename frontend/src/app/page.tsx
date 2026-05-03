@@ -87,8 +87,35 @@ export default function Dashboard() {
     }
 
     fetchSessions()
-    const interval = setInterval(fetchSessions, 3000)
-    return () => clearInterval(interval)
+    // open websocket for live sessions updates and stop polling
+    let ws: WebSocket | null = null
+    try {
+      const base = API_BASE.replace(/^http/, 'ws')
+      const url = `${base.replace(/\/$/, '')}/ws/sessions`
+      ws = new WebSocket(url)
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data)
+          if (msg.sessions) {
+            setSessions(Array.isArray(msg.sessions) ? msg.sessions : [])
+            setError(null)
+            setLastRefresh(new Date().toLocaleTimeString())
+            setLoading(false)
+          }
+        } catch (e) {
+          console.error('Malformed WS message', e)
+        }
+      }
+      ws.onclose = () => {
+        // no-op
+      }
+    } catch (e) {
+      console.error('Failed to open websocket', e)
+    }
+
+    return () => {
+      if (ws) ws.close()
+    }
   }, [])
 
   const totalEvents = sessions.reduce((sum, session) => sum + (session.total_events ?? 0), 0)

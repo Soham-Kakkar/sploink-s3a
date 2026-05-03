@@ -103,6 +103,44 @@ export default function SessionDetail() {
     fetchData()
   }, [id])
 
+  useEffect(() => {
+    // open a websocket for live updates; fall back to the initial fetch
+    if (!id) return
+    let ws: WebSocket | null = null
+    try {
+      const base = API_BASE.replace(/^http/, 'ws')
+      const url = `${base.replace(/\/$/, '')}/ws/sessions/${id}`
+      ws = new WebSocket(url)
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data)
+          if (msg.session && msg.events) {
+            setData(msg)
+            setError(null)
+            setLoading(false)
+          } else if (msg.session) {
+            setData((prev) => {
+              if (!prev) return { session: msg.session, summary: { total_events: 0, success_events: 0, failure_events: 0, action_distribution: {}, first_seen: null, last_seen: null, duration: null }, detected_issues: [], events: [] } as SessionData
+              return { ...prev, session: { ...prev.session, ...msg.session } }
+            })
+          }
+        } catch (e) {
+          // ignore malformed messages
+          console.error('Malformed WS message', e)
+        }
+      }
+      ws.onclose = () => {
+        // connection closed
+      }
+    } catch (e) {
+      console.error('Failed to open websocket', e)
+    }
+
+    return () => {
+      if (ws) ws.close()
+    }
+  }, [id])
+
   const meta = data ? statusStyles[data.session.status] ?? {
     label: data.session.status,
     pill: 'bg-slate-100 text-slate-700 border-slate-200',

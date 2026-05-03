@@ -1,6 +1,39 @@
 import difflib
 import aiosqlite
 from . import config
+from .ws_manager import broadcast
+
+
+async def _broadcast_sessions_list(db: aiosqlite.Connection):
+    try:
+        query = """
+        SELECT
+          s.session_id,
+          s.status,
+          s.created_at,
+          s.updated_at,
+          COUNT(e.id) AS total_events,
+          SUM(CASE WHEN e.status = 'success' THEN 1 ELSE 0 END) AS success_events,
+          SUM(CASE WHEN e.status = 'failure' THEN 1 ELSE 0 END) AS failure_events,
+          (SELECT action FROM events WHERE session_id = s.session_id ORDER BY timestamp DESC LIMIT 1) AS last_action,
+          (SELECT timestamp FROM events WHERE session_id = s.session_id ORDER BY timestamp DESC LIMIT 1) AS last_seen
+        FROM sessions s
+        LEFT JOIN events e ON s.session_id = e.session_id
+        GROUP BY s.session_id
+        ORDER BY s.updated_at DESC
+        """
+        async with db.execute(query) as cursor:
+            rows = await cursor.fetchall()
+            sessions_list = []
+            for r in rows:
+                row = dict(r)
+                row['total_events'] = int(row.get('total_events') or 0)
+                row['success_events'] = int(row.get('success_events') or 0)
+                row['failure_events'] = int(row.get('failure_events') or 0)
+                sessions_list.append(row)
+        await broadcast('all', {'sessions': sessions_list})
+    except Exception:
+        pass
 
 def calculate_similarity(s1: str, s2: str) -> float:
     return difflib.SequenceMatcher(None, s1, s2).ratio()
@@ -28,6 +61,11 @@ async def detect_issues(db: aiosqlite.Connection, session_id: str):
             if similarity >= 0.6 and has_failure: # Hardcoded 0.6 for now to test
                 await db.execute("UPDATE sessions SET status = 'looping' WHERE session_id = ?", (session_id,))
                 await db.commit()
+                try:
+                    await broadcast(session_id, {'session': {'session_id': session_id, 'status': 'looping'}})
+                except Exception:
+                    pass
+                await _broadcast_sessions_list(db)
                 return
 
     # 2. Failure Detection - Priority 2
@@ -39,6 +77,11 @@ async def detect_issues(db: aiosqlite.Connection, session_id: str):
         if len(failures) == config.MAX_CONSECUTIVE_FAILURES and all(f['status'] == 'failure' for f in failures):
             await db.execute("UPDATE sessions SET status = 'failing' WHERE session_id = ?", (session_id,))
             await db.commit()
+            try:
+                await broadcast(session_id, {'session': {'session_id': session_id, 'status': 'failing'}})
+            except Exception:
+                pass
+            await _broadcast_sessions_list(db)
             return
 
     # 3. Drift Detection
@@ -62,6 +105,11 @@ async def detect_issues(db: aiosqlite.Connection, session_id: str):
             # Check if this persists for a few steps (simplified here)
             await db.execute("UPDATE sessions SET status = 'drifting' WHERE session_id = ?", (session_id,))
             await db.commit()
+            try:
+                await broadcast(session_id, {'session': {'session_id': session_id, 'status': 'drifting'}})
+            except Exception:
+                pass
+            await _broadcast_sessions_list(db)
             return
 
     # If no issues detected and not already marked, keep/set healthy
