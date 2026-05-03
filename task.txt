@@ -1,0 +1,129 @@
+S3 Assessment Task
+Goal
+Build a system that:
+Ingests agent activity
+Processes noisy, real-world event streams
+Detects behavioral issues (loops, drift, failures)
+Surfaces insights via a simple interface
+Time: 3–4 hours
+
+Context
+You are building a monitoring system for an AI agent operating in a development environment.
+The agent performs actions like:
+reading/writing files
+calling LLMs
+executing commands
+These agents are often unreliable:
+they repeat steps
+change direction mid-task
+fail silently or retry excessively
+Your system should help identify and debug these behaviors.
+
+Requirements
+1. Event Ingestion API
+Endpoint:
+POST /events
+{
+ "session_id": "string",
+ "timestamp": number,
+ "step": number,
+ "action": "read_file | write_file | run_command | llm_call",
+ "input": "string",
+ "output": "string",
+ "metadata": {
+   "file": "optional",
+   "status": "success | failure"
+ }
+}
+
+Constraints
+Your system must handle:
+Out-of-order events
+Duplicate events
+Missing or partial fields
+High-frequency bursts
+Multiple concurrent sessions
+
+2. Agent Simulator (CLI)
+Build a CLI tool that simulates agent behavior.
+Example:
+python agent.py --scenario loop
+
+Required Scenarios
+Normal
+Logical progression of steps
+Loop
+Repeated actions (with slight variations)
+Drift
+Change in intent mid-session
+Failure
+Repeated failures / retries
+
+Expectations
+Loops should NOT be exact duplicates every time
+Drift should not be trivially obvious
+Events from multiple sessions may interleave
+
+3. Processing & Detection Layer
+Design a system that computes:
+Per Session Metrics:
+total steps
+success vs failure ratio
+action distribution
+
+Detection Logic
+Loop Detection
+Identify repeated behavior patterns
+ (not just identical strings)
+
+Drift Detection
+Identify when the agent changes direction or intent
+
+Failure Detection
+consecutive failures
+or abnormal failure rate
+
+Important
+Avoid naive rules like:
+simple string equality
+fixed thresholds without reasoning
+Your logic should reflect practical heuristics.
+
+4. Frontend (Minimal)
+Build a simple UI (Next.js or similar):
+Session List
+session_id
+status (healthy / looping / drifting / failing)
+key stats
+Session Detail
+event timeline
+detected issues
+summarized insights
+
+5. Edge Cases (Must Handle)
+Duplicate step numbers
+Same event sent multiple times
+Missing metadata
+Events arriving late
+Very fast event bursts
+Mixed session streams
+
+6. Design Decisions (Document This)
+In your README, explain:
+Data storage choice (in-memory vs DB)
+Real-time vs batch processing
+Detection thresholds and reasoning
+Trade-offs you made due to time constraints
+
+Deliverables
+GitHub repository
+Working system (local setup is fine)
+README with:
+setup instructions
+architecture overview
+detection logic
+trade-offs 
+                                                                                   
+  - "Record a 10-minute video walking through your detection logic. Explain why you chose your thresholds."
+  - A 15-minute live screen share after submission where you ask them to modify one detection rule on the spot (upload as youtube unlisted video with transcripts on, create a loom, or screen record and put it on google drive and share it with timothyng04@gmail.com)
+
