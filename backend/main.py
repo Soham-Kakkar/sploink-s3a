@@ -6,6 +6,7 @@ from typing import List
 
 from .database import init_db, get_db
 from .models import EventPayload, SessionResponse
+from .detection import detect_issues
 
 app = FastAPI(title="Agent Observability API")
 
@@ -50,6 +51,9 @@ async def ingest_event(payload: EventPayload, background_tasks: BackgroundTasks,
         # Duplicate event, ignore
         return {"status": "ignored", "reason": "duplicate"}
 
+    # 5. Trigger Detection (Async)
+    background_tasks.add_task(detect_issues, db, payload.session_id)
+    
     return {"status": "success"}
 
 @app.get("/sessions", response_model=List[SessionResponse])
