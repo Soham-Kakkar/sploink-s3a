@@ -55,10 +55,14 @@ async def detect_issues(db: aiosqlite.Connection, session_id: str):
             
             similarity = calculate_similarity(str_a, str_b)
             has_failure = any(e['status'] == 'failure' for e in events)
-            
-            print(f"DEBUG: Session {session_id} - Similarity: {similarity:.2f}, Has Failure: {has_failure}")
-            
-            if similarity >= 0.6 and has_failure: # Hardcoded 0.6 for now to test
+            # Debug info (uses configured threshold)
+            # If similarity meets configured threshold and there is at least one failure, mark looping
+            try:
+                threshold = config.LOOP_SIMILARITY_THRESHOLD
+            except Exception:
+                threshold = 0.6
+
+            if similarity >= threshold and has_failure:
                 await db.execute("UPDATE sessions SET status = 'looping' WHERE session_id = ?", (session_id,))
                 await db.commit()
                 try:

@@ -30,9 +30,16 @@ async def ingest_event(payload: EventPayload, background_tasks: BackgroundTasks,
     hash_str = f"{payload.session_id}_{payload.step}_{payload.timestamp}"
     hash_key = hashlib.sha256(hash_str.encode()).hexdigest()
     
-    # 2. Extract metadata
-    status = payload.metadata.status if payload.metadata else "success"
-    file_target = payload.metadata.file if payload.metadata else None
+    # 2. Extract metadata and normalize Enum values if present
+    if payload.metadata:
+        file_target = payload.metadata.file
+        status = payload.metadata.status.value if hasattr(payload.metadata.status, 'value') else payload.metadata.status
+    else:
+        file_target = None
+        status = "success"
+
+    # Normalize action enum to a plain string when inserting into the DB
+    action_value = payload.action.value if hasattr(payload.action, 'value') else payload.action
     
     # 3. Insert Session if not exists (to ensure foreign key works and session shows up)
     await db.execute(
@@ -46,7 +53,7 @@ async def ingest_event(payload: EventPayload, background_tasks: BackgroundTasks,
             INSERT INTO events (session_id, timestamp, step, action, input, output, status, file_target, hash_key)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            payload.session_id, payload.timestamp, payload.step, payload.action,
+            payload.session_id, payload.timestamp, payload.step, action_value,
             payload.input, payload.output, status, file_target, hash_key
         ))
         await db.commit()

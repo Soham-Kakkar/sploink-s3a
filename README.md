@@ -54,6 +54,19 @@ Real-time vs batch
 
 Detection logic (summary)
 - Loop detection: collects a sliding window of recent events and computes fuzzy sequence similarity using `difflib.SequenceMatcher`. If two halves of the recent window are similar (similarity >= 0.6) and there is at least one failure in the window, the session is marked `looping`.
+# Configured thresholds and reasoning
+
+- `LOOP_WINDOW_SIZE = 6` — a short recent window gives sensitivity to repeating behavior without requiring long history.
+- `LOOP_SIMILARITY_THRESHOLD = 0.85` — fuzzy similarity threshold tuned to require a high likeness between halves before flagging a loop; avoids false positives on coincidental repeats.
+- `DRIFT_BASELINE_EVENTS = 10` — baseline size large enough to establish an initial intent before detecting drift.
+- `MAX_CONSECUTIVE_FAILURES = 4` — require multiple consecutive failures before marking a session as `failing` to avoid noisy single failures.
+
+These values live in `backend/config.py` so they can be tuned without code changes. The detection logic uses these configured values (the code uses `config.LOOP_SIMILARITY_THRESHOLD`, `config.LOOP_WINDOW_SIZE`, etc.) and was chosen to balance sensitivity vs false positives for the small demo scenarios in the simulator.
+
+Notes on practical choices
+- We favor human-readable heuristics (fuzzy similarity, baseline membership) over opaque ML models because they are explainable for the 3–4 hour prototype scope.
+- Idempotency is achieved via a composite `hash_key` derived from `session_id`, `step`, and `timestamp`. This handles duplicate sends that include the same timestamp.
+- We intentionally do not deduplicate solely by `step` because agents can legitimately retry the same step with different timestamps; deduping by both step and timestamp (via `hash_key`) preserves late-arriving corrected events.
 - Failure detection: marks a session `failing` when `MAX_CONSECUTIVE_FAILURES` (from `backend/config.py`) consecutive events are failures.
 - Drift detection: compares a baseline set of `(file_target, action)` pairs vs recent pairs; if there's no overlap and baseline has enough examples, marks `drifting`.
 
@@ -135,8 +148,6 @@ The system is intentionally small but opinionated: it ingests raw event streams,
 python -m venv venv
 source venv/bin/activate
 pip install -r backend/requirements.txt
-export PYTHONPATH=$PYTHONPATH:.
-export AGENT_OBS_DB_PATH=agent_obs.db
 uvicorn backend.main:app --reload
 ```
 

@@ -50,12 +50,24 @@ class AgentSimulator:
         print(f"--- Starting Loop Scenario: {session_id} ---")
         # Initial steps
         self.send_event(session_id, 1, "read_file", "package.json", "{}")
-        
-        # The loop: Trying to run a command that fails, with variations
-        commands = ["npm test", "npm run test", "npm run test:unit", "npm t"]
-        for i in range(2, 10):
-            cmd = commands[i % len(commands)]
-            self.send_event(session_id, i, "run_command", cmd, "Command not found", status="failure")
+        # The loop: produce a short repeating sequence twice with small variations
+        # so fuzzy similarity >= configured threshold (0.85) will detect it.
+        base_seq = ["npm test", "npm run test", "npm t"]
+        # introduce a tiny variation in the second repetition to avoid exact duplicates
+        repeat_seq = ["npm test", "npm run test", "npm t "]
+
+        step = 2
+        # emit first half
+        for cmd in base_seq:
+            self.send_event(session_id, step, "run_command", cmd, "Command not found", status="failure")
+            step += 1
+        # emit second half (similar)
+        for cmd in repeat_seq:
+            self.send_event(session_id, step, "run_command", cmd, "Command not found", status="failure")
+            step += 1
+        # optionally continue noisy failures to extend the loop
+        for i in range(step, 10):
+            self.send_event(session_id, i, "run_command", base_seq[i % len(base_seq)], "Command not found", status="failure")
 
     def scenario_drift(self, session_id):
         print(f"--- Starting Drift Scenario: {session_id} ---")
