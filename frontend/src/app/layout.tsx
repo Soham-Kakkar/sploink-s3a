@@ -27,7 +27,18 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <header className="app-header">
+          <div className="container px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <h1 className="text-lg font-semibold">Agent Observability</h1>
+              <span className="text-sm text-gray-500">Dashboard</span>
+            </div>
+            <nav className="text-sm text-gray-600">v0.1</nav>
+          </div>
+        </header>
+        <main className="flex-1">{children}</main>
+      </body>
     </html>
   );
 }

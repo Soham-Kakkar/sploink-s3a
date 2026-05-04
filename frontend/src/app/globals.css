@@ -1,8 +1,10 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f4f0e8;
-  --foreground: #171717;
+  --background: #f7fafc;
+  --foreground: #0f172a;
+  --muted: #64748b;
+  --card: #ffffff;
 }
 
 @theme inline {
@@ -13,13 +15,17 @@
 }
 
 body {
-  background:
-    radial-gradient(circle at top left, rgba(14, 165, 233, 0.14), transparent 30%),
-    radial-gradient(circle at top right, rgba(245, 158, 11, 0.12), transparent 28%),
-    linear-gradient(180deg, #f8f4ee 0%, #f4f0e8 55%, #efe7db 100%);
+  background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
+
+header.app-header {
+  background: var(--card);
+  border-bottom: 1px solid rgba(2,6,23,0.06);
+}
+
+.container { max-width: 96rem; margin-left: auto; margin-right: auto; }
 
 ::selection {
   background: rgba(2, 132, 199, 0.2);

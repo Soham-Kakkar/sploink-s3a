@@ -134,14 +134,12 @@ export default function Dashboard() {
                 Live observability
               </div>
               <div className="space-y-3">
-                <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Agent Observability Dashboard</h1>
+                <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Agent Observability</h1>
                 <p className="max-w-2xl text-base leading-7 text-slate-600 sm:text-lg">
-                  Watch agent sessions in motion, spot repeated retries, drift, and failure streaks, and open any session to inspect the full timeline.
+                  Monitor agent runs, detect loops, drift, and failures, and inspect event timelines.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Polling every 3 seconds</span>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Backend: {API_BASE}</span>
                 {lastRefresh && <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Last refresh {lastRefresh}</span>}
                 {latestUpdate && (
                   <span className="rounded-full border border-slate-200 bg-white px-3 py-1">
@@ -198,7 +196,7 @@ export default function Dashboard() {
               )}
 
               {!loading && sessions.length === 0 && (
-                <div className="col-span-full rounded-3xl border border-dashed border-slate-300 bg-linear-to-br from-white to-slate-50 p-8 text-slate-600">
+                <div className="col-span-full rounded-3xl border border-dashed border-slate-300 bg-white/50 p-8 text-slate-600">
                   <h3 className="text-lg font-semibold text-slate-900">No sessions yet</h3>
                   <p className="mt-2 max-w-2xl text-sm leading-6">
                     Start the backend, run the simulator, and the dashboard will populate with real examples. The current simulator includes normal, looping, drifting, and failing sessions with duplicate and late-event chaos.
