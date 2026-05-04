@@ -74,7 +74,6 @@ Exact thresholds & heuristics
 - The loop similarity threshold is currently 0.6 (tunable). The implementation uses practical heuristics (fuzzy matching / sample sizes) rather than plain string equality.
 
 Trade-offs and limitations
-- Simplicity: the detection heuristics are intentionally lightweight for the 3–4 hour scope. They are pragmatic but not exhaustive.
 - In-memory WS manager: `backend/ws_manager.py` keeps WebSocket connections in memory (per-process). This is fine for local demos but not suitable for multi-process scaling.
 - No message sequencing: WebSocket messages do not include per-message monotonic sequence numbers or timestamps. In rare cases messages may arrive out of order and a stale update could overwrite a newer state. The frontend attempts to merge session updates by `session_id` to mitigate this.
 - Best-effort broadcasts: WS sends are best-effort and failures are ignored rather than retried.
