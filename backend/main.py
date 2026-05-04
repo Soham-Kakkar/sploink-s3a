@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import aiosqlite
 import hashlib
 from typing import List
+from datetime import datetime, timezone
 
 from .database import init_db, get_db
 from .models import EventPayload
@@ -20,6 +21,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Helper to convert SQLite timestamp string to UTC ISO
+def to_iso_utc(sqlite_ts: str) -> str:
+    if sqlite_ts is None:
+        return None
+    dt = datetime.strptime(sqlite_ts, "%Y-%m-%d %H:%M:%S")
+    return dt.replace(tzinfo=timezone.utc).isoformat().replace('+00:00', 'Z')
+
+# Helper to convert epoch timestamp to UTC ISO
+def epoch_to_iso_utc(ts: float) -> str:
+    if ts is None:
+        return None
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().replace('+00:00', 'Z')
+
 @app.on_event("startup")
 async def startup():
     await init_db()
@@ -30,18 +44,12 @@ async def ingest_event(payload: EventPayload, background_tasks: BackgroundTasks,
     hash_str = f"{payload.session_id}_{payload.step}_{payload.timestamp}"
     hash_key = hashlib.sha256(hash_str.encode()).hexdigest()
     
-    # 2. Extract metadata and normalize Enum values if present
-    if payload.metadata:
-        file_target = payload.metadata.file
-        status = payload.metadata.status.value if hasattr(payload.metadata.status, 'value') else payload.metadata.status
-    else:
-        file_target = None
-        status = "success"
-
-    # Normalize action enum to a plain string when inserting into the DB
-    action_value = payload.action.value if hasattr(payload.action, 'value') else payload.action
+    # 2. Extract metadata and normalize Enum values
+    file_target = getattr(payload.metadata, "file", None) if payload.metadata else None
+    status = getattr(getattr(payload.metadata, "status", None), "value", getattr(payload.metadata, "status", "success")) if payload.metadata else "success"
+    action_value = getattr(payload.action, "value", payload.action)
     
-    # 3. Insert Session if not exists (to ensure foreign key works and session shows up)
+    # 3. Insert Session if not exists
     await db.execute(
         "INSERT OR IGNORE INTO sessions (session_id, status) VALUES (?, 'healthy')",
         (payload.session_id,)
@@ -58,52 +66,44 @@ async def ingest_event(payload: EventPayload, background_tasks: BackgroundTasks,
         ))
         await db.commit()
     except aiosqlite.IntegrityError:
-        # Duplicate event, ignore
         return {"status": "ignored", "reason": "duplicate"}
 
-    # 5. Trigger Detection (Async)
+    # 5. Trigger Detection
     background_tasks.add_task(detect_issues, db, payload.session_id)
 
-    # Broadcast updated session detail to any connected WebSocket clients
+    # 6. Broadcast session and events
     try:
         async with db.execute("SELECT * FROM sessions WHERE session_id = ?", (payload.session_id,)) as cursor:
             sess = await cursor.fetchone()
         async with db.execute("SELECT * FROM events WHERE session_id = ? ORDER BY timestamp ASC", (payload.session_id,)) as cursor:
             events = await cursor.fetchall()
         events_list = [dict(e) for e in events]
-        total_events = len(events_list)
-        success_events = sum(1 for e in events_list if (e.get('status') or 'success') == 'success')
-        failure_events = sum(1 for e in events_list if (e.get('status') or 'success') == 'failure')
-        action_distribution = {}
-        first_seen = None
-        last_seen = None
-        for e in events_list:
-            action = e.get('action') or 'unknown'
-            action_distribution[action] = action_distribution.get(action, 0) + 1
-            ts = e.get('timestamp')
-            if ts is not None:
-                if first_seen is None or ts < first_seen:
-                    first_seen = ts
-                if last_seen is None or ts > last_seen:
-                    last_seen = ts
 
+        # Convert event timestamps to ISO UTC
+        for e in events_list:
+            e['timestamp'] = epoch_to_iso_utc(e.get('timestamp'))
+
+        first_seen = min((e['timestamp'] for e in events_list if e['timestamp']), default=None)
+        last_seen = max((e['timestamp'] for e in events_list if e['timestamp']), default=None)
         duration = None
-        if first_seen is not None and last_seen is not None:
-            try:
-                duration = float(last_seen) - float(first_seen)
-            except Exception:
-                duration = None
+        if first_seen and last_seen:
+            dt_first = datetime.fromisoformat(first_seen.replace('Z', '+00:00'))
+            dt_last = datetime.fromisoformat(last_seen.replace('Z', '+00:00'))
+            duration = (dt_last - dt_first).total_seconds()
 
         sess_dict = dict(sess) if sess else {'session_id': payload.session_id, 'status': 'healthy'}
+        sess_dict['created_at'] = to_iso_utc(sess_dict.get('created_at'))
+        sess_dict['updated_at'] = to_iso_utc(sess_dict.get('updated_at'))
+
         drift_streak = 1 if sess_dict.get('status') == 'drifting' else 0
 
         payload_msg = {
             'session': {**sess_dict, 'drift_streak': drift_streak},
             'summary': {
-                'total_events': total_events,
-                'success_events': success_events,
-                'failure_events': failure_events,
-                'action_distribution': action_distribution,
+                'total_events': len(events_list),
+                'success_events': sum(1 for e in events_list if (e.get('status') or 'success') == 'success'),
+                'failure_events': sum(1 for e in events_list if (e.get('status') or 'success') == 'failure'),
+                'action_distribution': {e.get('action', 'unknown'): sum(1 for x in events_list if x.get('action')==e.get('action')) for e in events_list},
                 'first_seen': first_seen,
                 'last_seen': last_seen,
                 'duration': duration,
@@ -113,7 +113,8 @@ async def ingest_event(payload: EventPayload, background_tasks: BackgroundTasks,
         }
 
         await broadcast(payload.session_id, payload_msg)
-        # also broadcast an updated sessions list to global listeners
+
+        # Broadcast sessions list
         try:
             query = """
             SELECT
@@ -136,6 +137,9 @@ async def ingest_event(payload: EventPayload, background_tasks: BackgroundTasks,
                 sessions_list = []
                 for r in rows:
                     row = dict(r)
+                    row['created_at'] = to_iso_utc(row.get('created_at'))
+                    row['updated_at'] = to_iso_utc(row.get('updated_at'))
+                    row['last_seen'] = epoch_to_iso_utc(row.get('last_seen'))
                     row['total_events'] = int(row.get('total_events') or 0)
                     row['success_events'] = int(row.get('success_events') or 0)
                     row['failure_events'] = int(row.get('failure_events') or 0)
@@ -148,9 +152,9 @@ async def ingest_event(payload: EventPayload, background_tasks: BackgroundTasks,
 
     return {"status": "success"}
 
+
 @app.get("/sessions")
 async def list_sessions(db: aiosqlite.Connection = Depends(get_db)):
-    # Aggregate per-session metrics so the frontend can display counts and last seen/action
     query = """
     SELECT
       s.session_id,
@@ -172,12 +176,15 @@ async def list_sessions(db: aiosqlite.Connection = Depends(get_db)):
         result = []
         for r in rows:
             row = dict(r)
-            # sqlite returns None for aggregates when no rows exist; normalize to integers
+            row['created_at'] = to_iso_utc(row.get('created_at'))
+            row['updated_at'] = to_iso_utc(row.get('updated_at'))
+            row['last_seen'] = epoch_to_iso_utc(row.get('last_seen'))
             row['total_events'] = int(row.get('total_events') or 0)
             row['success_events'] = int(row.get('success_events') or 0)
             row['failure_events'] = int(row.get('failure_events') or 0)
             result.append(row)
         return result
+
 
 @app.get("/sessions/{session_id}")
 async def get_session_detail(session_id: str, db: aiosqlite.Connection = Depends(get_db)):
@@ -188,11 +195,16 @@ async def get_session_detail(session_id: str, db: aiosqlite.Connection = Depends
     
     async with db.execute("SELECT * FROM events WHERE session_id = ? ORDER BY timestamp ASC", (session_id,)) as cursor:
         events = await cursor.fetchall()
-    # Build summary statistics expected by the frontend
     events_list = [dict(e) for e in events]
+
+    # Convert event timestamps to UTC ISO
+    for e in events_list:
+        e['timestamp'] = epoch_to_iso_utc(e.get('timestamp'))
+
     total_events = len(events_list)
     success_events = sum(1 for e in events_list if (e.get('status') or 'success') == 'success')
     failure_events = sum(1 for e in events_list if (e.get('status') or 'success') == 'failure')
+
     action_distribution = {}
     first_seen = None
     last_seen = None
@@ -200,22 +212,25 @@ async def get_session_detail(session_id: str, db: aiosqlite.Connection = Depends
         action = e.get('action') or 'unknown'
         action_distribution[action] = action_distribution.get(action, 0) + 1
         ts = e.get('timestamp')
-        if ts is not None:
+        if ts:
             if first_seen is None or ts < first_seen:
                 first_seen = ts
             if last_seen is None or ts > last_seen:
                 last_seen = ts
 
     duration = None
-    if first_seen is not None and last_seen is not None:
-        try:
-            duration = float(last_seen) - float(first_seen)
-        except Exception:
-            duration = None
+    if first_seen and last_seen:
+        dt_first = datetime.fromisoformat(first_seen.replace('Z', '+00:00'))
+        dt_last = datetime.fromisoformat(last_seen.replace('Z', '+00:00'))
+        duration = (dt_last - dt_first).total_seconds()
 
-    # Detected issues: surface simple human-friendly messages
-    detected = []
     sess = dict(session)
+    sess['created_at'] = to_iso_utc(sess.get('created_at'))
+    sess['updated_at'] = to_iso_utc(sess.get('updated_at'))
+    drift_streak = 1 if sess.get('status') == 'drifting' else 0
+
+    # Detected issues
+    detected = []
     status = sess.get('status')
     if status == 'looping':
         detected.append('Looping detected — the agent is repeating recent actions.')
@@ -224,14 +239,10 @@ async def get_session_detail(session_id: str, db: aiosqlite.Connection = Depends
     if status == 'drifting':
         detected.append('Drift detected — recent actions deviate from the baseline.')
 
-    # Additional heuristic: note long sessions or many failures
     if failure_events > 0 and total_events > 0:
         fail_ratio = failure_events / total_events
         if fail_ratio > 0.5:
             detected.append(f'Failure rate is high ({failure_events}/{total_events}).')
-
-    # drift_streak is not tracked separately; provide a basic value for frontend
-    drift_streak = 1 if status == 'drifting' else 0
 
     summary = {
         'total_events': total_events,
@@ -256,7 +267,6 @@ async def session_ws(websocket: WebSocket, session_id: str):
     await connect(session_id, websocket)
     try:
         while True:
-            # keep the connection open; clients may send pings
             await websocket.receive_text()
     except WebSocketDisconnect:
         await disconnect(session_id, websocket)
