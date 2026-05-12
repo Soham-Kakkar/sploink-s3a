@@ -88,6 +88,36 @@ async def detect_issues(db: aiosqlite.Connection, session_id: str):
             await _broadcast_sessions_list(db)
             return
 
+    # extra: Stuck Detection
+    async with db.execute(
+        "SELECT input, status, action, file_target FROM events WHERE session_id = ? ORDER BY timestamp DESC LIMIT ?",
+        (session_id, config.MAX_CONSECUTIVE_STUCK)
+    ) as cursor:
+        stuck_events = await cursor.fetchall()
+        if len(stuck_events) >= config.MAX_CONSECUTIVE_STUCK and all(s['status'] == 'success' for s in stuck_events):
+            # Check for low diversity of inputs and no successful state transitions
+            similarity = 0
+            for i in range(len(stuck_events)):
+                similarity += calculate_similarity(stuck_events[0]['input'], stuck_events[i]['input'])
+            similarity /= len(stuck_events)
+            
+            # Check if state transitions exist (different actions or file_targets)
+            actions = set(e['action'] for e in stuck_events if e['action'])
+            file_targets = set(e['file_target'] for e in stuck_events if e['file_target'])
+            no_state_transitions = len(actions) <= 1 and len(file_targets) <= 1
+            
+            print(f"Stuck Detection Similarity: {similarity:.2f}, Unique actions: {len(actions)}, Unique targets: {len(file_targets)}")
+
+            if similarity >= config.STUCK_SIMILARITY_THRESHOLD and no_state_transitions:
+                await db.execute("UPDATE sessions SET status = 'stuck' WHERE session_id = ?", (session_id,))
+                await db.commit()
+                try:
+                    await broadcast(session_id, {'session': {'session_id': session_id, 'status': 'stuck'}})
+                except Exception:
+                    pass
+                await _broadcast_sessions_list(db)
+                return
+
     # 3. Drift Detection
     async with db.execute(
         "SELECT DISTINCT file_target, action FROM events WHERE session_id = ? ORDER BY timestamp ASC LIMIT ?",

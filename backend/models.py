@@ -8,11 +8,13 @@ class ActionEnum(str, Enum):
     write_file = 'write_file'
     run_command = 'run_command'
     llm_call = 'llm_call'
-
+    retry = 'retry'
+    branch = 'branch'
 
 class StatusEnum(str, Enum):
     success = 'success'
     failure = 'failure'
+    stuck = 'stuck'
 
 
 class EventMetadata(BaseModel):

@@ -238,6 +238,8 @@ async def get_session_detail(session_id: str, db: aiosqlite.Connection = Depends
         detected.append('Failing — recent events show consecutive failures.')
     if status == 'drifting':
         detected.append('Drift detected — recent actions deviate from the baseline.')
+    if status == 'stuck':
+        detected.append('Stuck — the agent is repeating the same action without progress.')
 
     if failure_events > 0 and total_events > 0:
         fail_ratio = failure_events / total_events

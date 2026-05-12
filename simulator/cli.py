@@ -45,6 +45,8 @@ class AgentSimulator:
         self.send_event(session_id, 2, "llm_call", "Analyze code", "Code looks good, add a test.")
         self.send_event(session_id, 3, "write_file", "tests/test_main.py", "test code...", file="tests/test_main.py")
         self.send_event(session_id, 4, "run_command", "pytest", "4 passed", status="success")
+        self.send_event(session_id, 4, "retry", "step 4", "done", status="success")
+        self.send_event(session_id, 4, "branch", "branch", "done", status="success")
 
     def scenario_loop(self, session_id):
         print(f"--- Starting Loop Scenario: {session_id} ---")
@@ -52,9 +54,9 @@ class AgentSimulator:
         self.send_event(session_id, 1, "read_file", "package.json", "{}")
         # The loop: produce a short repeating sequence twice with small variations
         # so fuzzy similarity >= configured threshold (0.85) will detect it.
-        base_seq = ["npm test", "npm run test", "npm t"]
+        base_seq = ["npm test", "npm run test", "npm t", "retry", "branch"]
         # introduce a tiny variation in the second repetition to avoid exact duplicates
-        repeat_seq = ["npm test", "npm run test", "npm t "]
+        repeat_seq = ["npm test", "npm run test", "npm t ", "retry", "branch"]
 
         step = 2
         # emit first half
@@ -81,13 +83,20 @@ class AgentSimulator:
 
     def scenario_failure(self, session_id):
         print(f"--- Starting Failure Scenario: {session_id} ---")
-        for i in range(1, 6):
+        for i in range(1, 4):
             self.send_event(session_id, i, "llm_call", "Generate code", "Connection timeout", status="failure")
+        for i in range(4, 7):
+            self.send_event(session_id, i, "retry", "step 3", "Connection timeout", status="failure")
+
+    def scenario_stuck(self, session_id):
+        print(f"--- Starting Stuck Scenario: {session_id} ---")
+        for i in range(1, 7):
+            self.send_event(session_id, 1, "read_file", "src/main.py", "file content...", file="src/main.py")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Agent Simulator CLI")
     parser.add_argument("--target", default="http://localhost:8000/events", help="Target API URL")
-    parser.add_argument("--scenario", choices=["normal", "loop", "drift", "failure"], required=True, help="Scenario to run")
+    parser.add_argument("--scenario", choices=["normal", "loop", "drift", "failure", "stuck"], required=True, help="Scenario to run")
     args = parser.parse_args()
 
     sim = AgentSimulator(args.target)
@@ -101,3 +110,5 @@ if __name__ == "__main__":
         sim.scenario_drift(session_id)
     elif args.scenario == "failure":
         sim.scenario_failure(session_id)
+    elif args.scenario == "stuck":
+        sim.scenario_stuck(session_id)
